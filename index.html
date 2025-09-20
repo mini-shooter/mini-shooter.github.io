@@ -5,7 +5,8 @@
 <title>Mini Shooter — Free For All (Web) | mini-shooter.github.io</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <style>
-  :root{--bg:#0b0f1a;--txt:#eaf2ff;--glass:rgba(255,255,255,.08);--b:rgba(255,255,255,.18);--blue:#79a8ff;--green:#7bf1a8}
+  :root{--bg:#0b0f1a;--txt:#eaf2ff;--glass:rgba(255,255,255,.08);--b:rgba(255,255,255,.18);
+        --blue:#79a8ff;--cyan:#5bd1d7;--red:#f25f5c;--green:#7bf1a8}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;height:100%;background:#0c1022;color:var(--txt);font-family:system-ui,Segoe UI,Roboto,Arial;overflow:hidden;touch-action:none}
   #game{position:fixed;inset:0;width:100vw;height:100vh;background:var(--bg);display:block;touch-action:none;user-select:none;z-index:0}
@@ -34,8 +35,13 @@
   #rotate h2{margin:0 0 6px 0;font-size:22px}
   #rotate p{margin:0;opacity:.85}
 
-  /* Hinweis */
   #hint{position:fixed;bottom:10px;left:50%;transform:translateX(-50%);z-index:9;background:var(--glass);border:1px solid var(--b);padding:6px 10px;border-radius:10px;backdrop-filter:blur(8px);font-size:13px;text-align:center}
+
+  /* Sprite-Loader UI (rechts oben) */
+  #loader{position:fixed;top:10px;right:10px;z-index:15;display:flex;gap:8px}
+  #loader button{background:var(--glass);border:1px solid var(--b);color:var(--txt);padding:6px 10px;border-radius:10px;cursor:pointer}
+  #loader button:hover{filter:brightness(1.1)}
+  #errors{position:fixed;right:10px;bottom:10px;z-index:15;background:rgba(255,80,80,.12);border:1px solid rgba(255,80,80,.4);color:#ffdede;padding:8px 10px;border-radius:10px;display:none;max-width:min(90vw,420px);font-size:12px;backdrop-filter:blur(8px)}
 
   /* Joystick UI */
   #joy{position:fixed;left:0;top:0;pointer-events:none;z-index:6}
@@ -58,10 +64,21 @@
   <div class="badge">SCORE <span id="score" style="font-weight:800;margin-left:6px">0</span></div>
 </div>
 
+<!-- Sprite-Loader -->
+<div id="loader">
+  <input id="filePlayer" type="file" accept="image/*" hidden>
+  <input id="fileEnemy"  type="file" accept="image/*" hidden>
+  <input id="fileHeal"   type="file" accept="image/*" hidden>
+  <button onclick="document.getElementById('filePlayer').click()">Player-Sprite</button>
+  <button onclick="document.getElementById('fileEnemy').click()">Enemy-Sprite</button>
+  <button onclick="document.getElementById('fileHeal').click()">Heal-Sprite</button>
+</div>
+<div id="errors"></div>
+
 <div id="overlay">
   <div class="box">
     <h1>CLICK / TAP TO START</h1>
-    <p>Desktop: Maus • Mobile: Joysticks</p>
+    <p>Desktop: Maus • Mobile: Joysticks • Du kannst eigene Sprites laden (rechts oben)</p>
   </div>
 </div>
 
@@ -80,76 +97,87 @@
 
 <script>
 (()=>{
-  document.title = "Mini Shooter — Free For All (Web) | mini-shooter.github.io";
+  document.title="Mini Shooter — Free For All (Web) | mini-shooter.github.io";
   const isMobile=/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)||(navigator.maxTouchPoints||0)>0;
 
   const canvas=document.getElementById('game'), ctx=canvas.getContext('2d');
   const joyCanvas=document.getElementById('joy'), jctx=joyCanvas.getContext('2d');
   const overlay=document.getElementById('overlay'), rotate=document.getElementById('rotate');
   const hpfill=document.getElementById('hpfill'), hptext=document.getElementById('hptext'), scoreEl=document.getElementById('score');
+  const errorsBox=document.getElementById('errors');
 
-  function resize(){ const dpr=Math.min(2,window.devicePixelRatio||1);
-    canvas.width=Math.floor(innerWidth*dpr); canvas.height=Math.floor(innerHeight*dpr);
-    ctx.setTransform(dpr,0,0,dpr,0,0); joyCanvas.width=innerWidth; joyCanvas.height=innerHeight;
-  }
+  function resize(){const dpr=Math.min(2,window.devicePixelRatio||1);
+    canvas.width=Math.floor(innerWidth*dpr);canvas.height=Math.floor(innerHeight*dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);joyCanvas.width=innerWidth;joyCanvas.height=innerHeight;}
   addEventListener('resize',resize,{passive:true}); resize();
+  function updateRotate(){rotate.style.display=(isMobile&&innerHeight>innerWidth)?'flex':'none';}
+  addEventListener('resize',updateRotate,{passive:true});updateRotate();
 
-  function updateRotate(){ rotate.style.display=(isMobile && innerHeight>innerWidth)?'flex':'none'; }
-  addEventListener('resize',updateRotate,{passive:true}); updateRotate();
-
-  // ---- SPRITES ----
-  const SPRITES={ player:'player.png', enemy:'gegner.png', heal:'healing.png' };
-  const IMGS={}; let leftToLoad=Object.keys(SPRITES).length;
-  function loadAll(cb){
-    for(const [k,src] of Object.entries(SPRITES)){
-      const img=new Image();
-      img.onload=img.onerror=()=>{ IMGS[k]=img; if(--leftToLoad===0) cb(); };
-      img.src=src;
-    }
+  // ===== Sprites (data URLs optional) =====
+  const IMGS={player:null,enemy:null,heal:null};
+  function setSprite(which, src){
+    const img=new Image(); img.onload=()=>{IMGS[which]=img}; img.onerror=()=>showError(`Konnte ${which}-Sprite nicht laden.`);
+    img.src=src;
   }
+  // Default Fallbacks (zeichnen statt Bild)
+  function drawPlayerFallback(r){const g=ctx.createRadialGradient(0,0,2,0,0,r);g.addColorStop(0,"#5bd1d7");g.addColorStop(1,"#79a8ff");ctx.fillStyle=g;ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#eaf2ff";ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(r+12,0);ctx.stroke();}
+  function drawEnemyFallback(x,y,r){const g=ctx.createRadialGradient(x,y,2,x,y,r);g.addColorStop(0,"#ff786e");g.addColorStop(1,"rgba(242,95,92,.6)");ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();}
+  function drawHealFallback(x,y,r){ctx.fillStyle="rgba(123,241,168,0.6)";ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x-r*0.5,y);ctx.lineTo(x+r*0.5,y);ctx.moveTo(x,y-r*0.5);ctx.lineTo(x,y+r*0.5);ctx.stroke();}
 
-  // ---- START overlay handlers + AUTO FALLBACK ----
+  // Drag&Drop / File Inputs
+  ['filePlayer','fileEnemy','fileHeal'].forEach(id=>{
+    document.getElementById(id).addEventListener('change', e=>{
+      const f=e.target.files?.[0]; if(!f) return;
+      const url=URL.createObjectURL(f);
+      if(id==='filePlayer') setSprite('player',url);
+      if(id==='fileEnemy')  setSprite('enemy',url);
+      if(id==='fileHeal')   setSprite('heal',url);
+    });
+  });
+  window.addEventListener('dragover',e=>{e.preventDefault();});
+  window.addEventListener('drop',e=>{
+    e.preventDefault();
+    [...e.dataTransfer.files].forEach(f=>{
+      const name=f.name.toLowerCase(); const url=URL.createObjectURL(f);
+      if(name.includes('player')) setSprite('player',url);
+      else if(name.includes('heal')||name.includes('med')||name.includes('plus')) setSprite('heal',url);
+      else setSprite('enemy',url);
+    });
+  });
+
+  function showError(msg){errorsBox.style.display='block'; errorsBox.textContent=msg;}
+
+  // ===== Start / Overlay =====
   let started=false;
-  function startNow(){ if(started) return; started=true; overlay.style.display='none'; startGame(); }
-  overlay.addEventListener('click', (e)=>{ e.preventDefault(); startNow(); });
-  overlay.addEventListener('touchstart', (e)=>{ e.preventDefault(); startNow(); }, {passive:false});
-  // Falls Overlay aus irgendeinem Grund nicht sichtbar ist -> Auto-Start nach 1s
-  setTimeout(()=>{ if(!started) startNow(); }, 1000);
+  function start(){ if(started) return; started=true; overlay.style.display='none'; startGame(); }
+  overlay.addEventListener('click',e=>{e.preventDefault();start();});
+  overlay.addEventListener('touchstart',e=>{e.preventDefault();start();},{passive:false});
+  setTimeout(()=>{ if(!started) start(); }, 800); // Auto-Start Fallback
 
-  // ---- MATH ----
+  // ===== Math helpers =====
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   const ang=(x1,y1,x2,y2)=>Math.atan2(y2-y1,x2-x1);
   const d2=(x1,y1,x2,y2)=>{const dx=x2-x1,dy=y2-y1;return dx*dx+dy*dy};
 
-  // ---- STATE ----
+  // ===== Game State =====
   let S=null;
   function resetGame(){
-    S={
-      run:true, score:0,
-      px:innerWidth/2, py:innerHeight/2, pr:18, speed:isMobile?300:260,
-      hp:3, hpMax:3,
-      keys:{}, mouse:{x:innerWidth/2,y:innerHeight/2,down:false},
-      bullets:[], enemies:[], heals:[],
-      spawnT:0, shootT:0, healT:3,
-      faceA:0, aimR:60,
-      moveId:null, moveCX:0, moveCY:0, moveDX:0, moveDY:0,
-      aimId:null, aimCX:0, aimCY:0, aimDX:0, aimDY:0, aimActive:false, aimTapStart:0
-    };
-    updHP(); updScore();
-    for(let i=0;i<8;i++) spawnEnemy();
-    clearJoy();
+    S={run:true,score:0,px:innerWidth/2,py:innerHeight/2,pr:18,speed:isMobile?300:260,
+       hp:3,hpMax:3,keys:{},mouse:{x:innerWidth/2,y:innerHeight/2,down:false},
+       bullets:[],enemies:[],heals:[],spawnT:0,shootT:0,healT:3,faceA:0,aimR:60,
+       moveId:null,moveCX:0,moveCY:0,moveDX:0,moveDY:0,aimId:null,aimCX:0,aimCY:0,aimDX:0,aimDY:0,aimActive:false,aimTapStart:0};
+    updHP();updScore(); for(let i=0;i<8;i++) spawnEnemy(); clearJoy();
   }
-  function updHP(){ hptext.textContent=S.hp; hpfill.style.width=(S.hp/S.hpMax*100)+'%'; }
-  function updScore(){ scoreEl.textContent=S.score; }
+  function updHP(){hptext.textContent=S.hp;hpfill.style.width=(S.hp/S.hpMax*100)+'%';}
+  function updScore(){scoreEl.textContent=S.score;}
 
-  // ---- INPUT DESKTOP ----
-  addEventListener('keydown',e=>{ if(S) S.keys[e.code]=true; if(!S?.run && e.code==='Space'){ resetGame(); }});
+  // ===== Desktop Input =====
+  addEventListener('keydown',e=>{ if(S) S.keys[e.code]=true; if(!S?.run && e.code==='Space'){ resetGame(); startGame(); }});
   addEventListener('keyup',e=>{ if(S) S.keys[e.code]=false; });
-  canvas.addEventListener('mousedown',()=>{ if(S){ S.mouse.down=true; S.aimActive=true; }});
-  addEventListener('mouseup',()=>{ if(S){ S.mouse.down=false; S.aimActive=false; }});
+  canvas.addEventListener('mousedown',()=>{ if(S){ S.mouse.down=true; S.aimActive=true; }}); addEventListener('mouseup',()=>{ if(S){ S.mouse.down=false; S.aimActive=false; }});
   addEventListener('mousemove',e=>{ if(S){ S.mouse.x=e.clientX; S.mouse.y=e.clientY; }},{passive:true});
 
-  // ---- TOUCH (BS) ----
+  // ===== Touch Joysticks (BS) =====
   function drawJoy(cx,cy,dx,dy,rBase=62,rKnob=26,kind='move'){
     jctx.save(); jctx.globalAlpha=.95;
     jctx.beginPath(); jctx.fillStyle=(kind==='move')?"rgba(121,168,255,.12)":"rgba(123,241,168,.12)";
@@ -157,8 +185,7 @@
     jctx.lineWidth=2; jctx.arc(cx,cy,rBase,0,Math.PI*2); jctx.fill(); jctx.stroke();
     const kx=cx+dx, ky=cy+dy;
     jctx.beginPath(); jctx.fillStyle=(kind==='move')?"rgba(121,168,255,.35)":"rgba(123,241,168,.35)";
-    jctx.strokeStyle="rgba(234,242,255,.9)"; jctx.lineWidth=2;
-    jctx.arc(kx,ky,rKnob,0,Math.PI*2); jctx.fill(); jctx.stroke();
+    jctx.strokeStyle="rgba(234,242,255,.9)"; jctx.lineWidth=2; jctx.arc(kx,ky,rKnob,0,Math.PI*2); jctx.fill(); jctx.stroke();
     if(kind==='aim'){ jctx.beginPath(); jctx.strokeStyle="rgba(255,255,255,.7)"; jctx.lineWidth=2; jctx.moveTo(cx,cy); jctx.lineTo(kx,ky); jctx.stroke(); }
     jctx.restore();
   }
@@ -166,15 +193,12 @@
   const leftSide=x=>x<innerWidth*0.5;
 
   canvas.addEventListener('touchstart',e=>{
-    if(!S) return; e.preventDefault();
-    const now=performance.now();
+    if(!S) return; e.preventDefault(); const now=performance.now();
     for(const t of e.changedTouches){
       if(leftSide(t.clientX) && S.moveId===null){
-        S.moveId=t.identifier; S.moveCX=t.clientX; S.moveCY=t.clientY; S.moveDX=0; S.moveDY=0;
-        drawJoy(S.moveCX,S.moveCY,0,0,62,26,'move');
+        S.moveId=t.identifier; S.moveCX=t.clientX; S.moveCY=t.clientY; S.moveDX=0; S.moveDY=0; drawJoy(S.moveCX,S.moveCY,0,0,62,26,'move');
       }else if(!leftSide(t.clientX) && S.aimId===null){
-        S.aimId=t.identifier; S.aimCX=t.clientX; S.aimCY=t.clientY; S.aimDX=0; S.aimDY=0; S.aimActive=true; S.aimTapStart=now;
-        drawJoy(S.aimCX,S.aimCY,0,0,62,26,'aim');
+        S.aimId=t.identifier; S.aimCX=t.clientX; S.aimCY=t.clientY; S.aimDX=0; S.aimDY=0; S.aimActive=true; S.aimTapStart=now; drawJoy(S.aimCX,S.aimCY,0,0,62,26,'aim');
       }
     }
   },{passive:false});
@@ -192,8 +216,7 @@
     }
   },{passive:false});
   function endTouch(e){
-    if(!S) return; e.preventDefault();
-    const now=performance.now();
+    if(!S) return; e.preventDefault(); const now=performance.now();
     for(const t of e.changedTouches){
       if(t.identifier===S.moveId){ S.moveId=null; S.moveDX=0; S.moveDY=0; clearJoy(); }
       if(t.identifier===S.aimId){
@@ -206,7 +229,7 @@
   canvas.addEventListener('touchend',endTouch,{passive:false});
   canvas.addEventListener('touchcancel',endTouch,{passive:false});
 
-  // ---- SPAWNS ----
+  // ===== Spawns & Heals =====
   function spawnEnemy(){
     const side=(Math.random()*4)|0; let x=0,y=0,m=24;
     if(side===0){x=Math.random()*innerWidth;y=-m;}
@@ -221,34 +244,28 @@
     S.heals.push({x,y,r:18,life:9+Math.random()*6,age:0});
   }
 
-  // ---- TARGETING ----
+  // ===== Targeting =====
   function nearestEnemy(maxDist=260){
     let best=null, bestD2=maxDist*maxDist;
-    for(const e of S.enemies){ const dd=d2(S.px,S.py,e.x,e.y); if(dd<bestD2){bestD2=dd;best=e;} }
+    for(const e of S.enemies){const dd=d2(S.px,S.py,e.x,e.y); if(dd<bestD2){bestD2=dd;best=e;}}
     return best;
   }
 
-  // ---- SHOOTING (AimAssist + Bullet-Magnet) ----
+  // ===== Shooting (AimAssist + Bullet-Magnet) =====
   function fireShot(angle){
     if(S.shootT>0) return;
-    // AimAssist: schnapp Gegner nahe ZIELKREIS (Maus/Aim-Stick)
-    let cx = (S.aimId!==null) ? (S.aimCX+S.aimDY*0+S.aimDX*0 + S.aimCX+S.aimDX - S.aimCX) : S.mouse.x;
-    let cy = (S.aimId!==null) ? (S.aimCY+S.aimDX*0+S.aimDY*0 + S.aimCY+S.aimDY - S.aimCY) : S.mouse.y;
-    // (oben nur um sicherzugehen, dass wir keine NaN bekommen)
+    // Aim-Assist: nimm Gegner nahe Cursor/Aim-Stick
+    let cx=(S.aimId!==null)?(S.aimCX+S.aimDX):S.mouse.x, cy=(S.aimId!==null)?(S.aimCY+S.aimDY):S.mouse.y;
     let best=null,bestD2=S.aimR*S.aimR;
-    for(const e of S.enemies){
-      const dx=e.x-cx, dy=e.y-cy, dd=dx*dx+dy*dy;
-      if(dd<bestD2){bestD2=dd;best=e;}
-    }
+    for(const e of S.enemies){const dx=e.x-cx,dy=e.y-cy,dd=dx*dx+dy*dy; if(dd<bestD2){bestD2=dd;best=e;}}
     if(best) angle=ang(S.px,S.py,best.x,best.y);
-
     const spd=520;
     S.bullets.push({x:S.px+Math.cos(angle)*S.pr,y:S.py+Math.sin(angle)*S.pr,vx:Math.cos(angle)*spd,vy:Math.sin(angle)*spd,life:.9,corrected:false});
     S.shootT=.12; S.faceA=angle;
   }
   function autoAimShoot(){ const t=nearestEnemy(260); const a=t?ang(S.px,S.py,t.x,t.y):0; fireShot(a); }
 
-  // ---- GAME ----
+  // ===== Game Loop =====
   function startGame(){
     resetGame();
     let last=performance.now();
@@ -257,10 +274,10 @@
       const dt=Math.min(.033,(now-last)/1000); last=now;
 
       S.shootT=Math.max(0,S.shootT-dt);
-      S.spawnT-=dt; if(S.spawnT<=0){ spawnEnemy(); S.spawnT=Math.max(.2,.8-S.score*.01); }
+      S.spawnT-=dt; if(S.spawnT<=0){spawnEnemy(); S.spawnT=Math.max(.2,.8-S.score*.01);}
       S.healT -=dt; if(S.healT<=0){ if(Math.random()<0.7) spawnHeal(); S.healT=6+Math.random()*4; }
 
-      // MOVE
+      // Bewegung
       let vx=0,vy=0;
       if(S.keys['KeyW']||S.keys['ArrowUp']) vy-=1;
       if(S.keys['KeyS']||S.keys['ArrowDown']) vy+=1;
@@ -271,7 +288,7 @@
       S.px=clamp(S.px+vx*S.speed*dt,S.pr,innerWidth-S.pr);
       S.py=clamp(S.py+vy*S.speed*dt,S.pr,innerHeight-S.pr);
 
-      // Desktop: Maus halten schießt
+      // Desktop Dauerfeuer beim Halten
       if(!isMobile && S.mouse.down){ fireShot(ang(S.px,S.py,S.mouse.x,S.mouse.y)); }
 
       // Facing
@@ -281,7 +298,7 @@
         S.faceA=ang(S.px,S.py,ax,ay);
       }else if(vx||vy){ S.faceA=Math.atan2(vy,vx); }
 
-      // BULLETS + MAGNET
+      // Bullets + Magnet
       for(let i=S.bullets.length-1;i>=0;i--){
         const b=S.bullets[i]; b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt;
         for(const e of S.enemies){
@@ -298,12 +315,12 @@
         if(b.life<=0||b.x<0||b.x>innerWidth||b.y<0||b.y>innerHeight) S.bullets.splice(i,1);
       }
 
-      // ENEMIES + COLLISIONS
+      // Enemies + Collisions
       for(let i=S.enemies.length-1;i>=0;i--){
         const e=S.enemies[i], a=ang(e.x,e.y,S.px,S.py);
         e.x+=Math.cos(a)*e.speed*dt; e.y+=Math.sin(a)*e.speed*dt;
 
-        // bullet hit
+        // Treffer durch Kugeln
         let hit=false;
         for(let j=S.bullets.length-1;j>=0;j--){
           const b=S.bullets[j];
@@ -311,14 +328,14 @@
         }
         if(hit){ S.enemies.splice(i,1); S.score++; updScore(); continue; }
 
-        // player hit
+        // Spieler-Kollision
         if(d2(S.px,S.py,e.x,e.y) <= (S.pr+e.r)*(S.pr+e.r)){
           S.hp--; updHP(); S.enemies.splice(i,1);
           if(S.hp<=0){ gameOver(); return; }
         }
       }
 
-      // HEALS
+      // Heals
       for(let i=S.heals.length-1;i>=0;i--){
         const h=S.heals[i]; h.age+=dt; h.life-=dt;
         if(d2(S.px,S.py,h.x,h.y) <= (S.pr+h.r)*(S.pr+h.r)){
@@ -328,7 +345,7 @@
         if(h.life<=0) S.heals.splice(i,1);
       }
 
-      // RENDER
+      // ===== RENDER =====
       ctx.clearRect(0,0,innerWidth,innerHeight);
       // Grid
       const step=32; ctx.lineWidth=1;
@@ -339,25 +356,22 @@
       ctx.fillStyle="#9ec1ff";
       for(const b of S.bullets){ ctx.beginPath(); ctx.arc(b.x,b.y,3,0,Math.PI*2); ctx.fill(); }
 
-      // Enemies
+      // Enemies (Sprite oder Fallback)
       for(const e of S.enemies){
         const size=e.r*2;
-        if(IMGS.enemy && IMGS.enemy.complete) ctx.drawImage(IMGS.enemy, e.x-size/2, e.y-size/2, size, size);
-        else { ctx.fillStyle="rgba(242,95,92,0.85)"; ctx.beginPath(); ctx.arc(e.x,e.y,e.r,0,Math.PI*2); ctx.fill(); }
+        if(IMGS.enemy){ ctx.drawImage(IMGS.enemy, e.x-size/2, e.y-size/2, size, size); }
+        else drawEnemyFallback(e.x,e.y,e.r);
       }
-
       // Heals
       for(const h of S.heals){
         const pulse=0.92+0.1*Math.sin((h.age||0)*4), R=h.r*pulse, size=R*2;
-        if(IMGS.heal && IMGS.heal.complete) ctx.drawImage(IMGS.heal, h.x-size/2, h.y-size/2, size, size);
-        else { ctx.fillStyle="rgba(123,241,168,0.6)"; ctx.beginPath(); ctx.arc(h.x,h.y,R,0,Math.PI*2); ctx.fill(); }
+        if(IMGS.heal){ ctx.drawImage(IMGS.heal, h.x-size/2, h.y-size/2, size, size); }
+        else drawHealFallback(h.x,h.y,R);
       }
-
       // Player
-      const pSize=S.pr*2;
       ctx.save(); ctx.translate(S.px,S.py); ctx.rotate(S.faceA);
-      if(IMGS.player && IMGS.player.complete) ctx.drawImage(IMGS.player,-pSize/2,-pSize/2,pSize,pSize);
-      else { ctx.fillStyle="#79a8ff"; ctx.beginPath(); ctx.arc(0,0,S.pr,0,Math.PI*2); ctx.fill(); }
+      if(IMGS.player){ ctx.drawImage(IMGS.player, -S.pr, -S.pr, S.pr*2, S.pr*2); }
+      else drawPlayerFallback(S.pr);
       ctx.restore();
 
       requestAnimationFrame(loop);
@@ -370,17 +384,16 @@
     ctx.fillStyle="rgba(0,0,0,.5)"; ctx.fillRect(0,0,innerWidth,innerHeight);
     ctx.fillStyle="#fff"; ctx.font="700 32px Arial"; ctx.textAlign="center";
     ctx.fillText("GAME OVER", innerWidth/2, innerHeight/2-18);
-    ctx.font="18px Arial"; ctx.fillText(isMobile?"Tippe zum Neustart":"Drücke LEERTASTE für Neustart", innerWidth/2, innerHeight/2+18);
+    ctx.font="18px Arial";
+    ctx.fillText(isMobile?"Tippe zum Neustart":"Drücke LEERTASTE für Neustart", innerWidth/2, innerHeight/2+18);
     if(isMobile){ addEventListener('touchstart',()=>{ resetGame(); startGame(); },{once:true, passive:true}); }
     else{ addEventListener('keydown',(e)=>{ if(e.code==='Space'){ resetGame(); startGame(); }},{once:true}); }
   }
 
-  // Keys & Maus
+  // Key states
   addEventListener('keydown',e=>{ if(S) S.keys[e.code]=true; });
   addEventListener('keyup',e=>{ if(S) S.keys[e.code]=false; });
 
-  // Sprites laden, dann Overlay (oder Auto-Start) -> Spiel
-  loadAll(()=>{}); // wir starten über Overlay/Auto-Fallback
 })();
 </script>
 </body>
